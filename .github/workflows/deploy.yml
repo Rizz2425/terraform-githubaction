@@ -13,6 +13,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false # Taaki extra debug info na aaye
 
       - name: Terraform Init & Apply
         id: tf
@@ -23,7 +25,9 @@ jobs:
         run: |
           terraform init
           terraform apply -auto-approve
-          echo "instance_ip=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
+          # IP ko clean karke environment variable mein save karna
+          TF_IP=$(terraform output -raw instance_ip | tr -d '\r\n')
+          echo "instance_ip=$TF_IP" >> $GITHUB_ENV
 
       - name: Deploy Django to New EC2
         uses: appleboy/ssh-action@master
@@ -45,10 +49,11 @@ jobs:
             # Env & Database
             echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" > .env
             echo "SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
+            echo "DEBUG=False" >> .env
             python manage.py migrate --noinput
             python manage.py collectstatic --noinput
 
-            # Automatic Nginx & Gunicorn Setup (No Manual Work)
+            # Automatic Nginx & Gunicorn Setup
             sudo rm -f /etc/nginx/sites-enabled/default
             sudo bash -c "cat > /etc/nginx/sites-available/doctor_ai <<EOF
             server {
@@ -57,6 +62,9 @@ jobs:
                 location / {
                     proxy_pass http://localhost:8000;
                     include proxy_params;
+                }
+                location /static/ {
+                    alias /home/ubuntu/Doctor_AI/staticfiles/;
                 }
             }
             EOF"
