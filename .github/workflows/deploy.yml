@@ -1,50 +1,69 @@
-name: Django Deploy to AWS
+name: Full Auto Deployment (Infra + App)
 
 on:
   push:
     branches: [ main ]
 
 jobs:
-  deploy:
+  terraform-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Deploy to EC2 via SSH
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init & Apply
+        id: tf
+        working-directory: ./terraform
+        env:
+          TF_VAR_aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TF_VAR_aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          terraform init
+          terraform apply -auto-approve
+          echo "instance_ip=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
+
+      - name: Deploy Django to New EC2
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
+          host: ${{ env.instance_ip }}
+          username: ubuntu
           key: ${{ secrets.AWS_SSH_KEY }}
           script: |
-            # 1. Update and install dependencies (Pehli baar ke liye)
             sudo apt update -y
-            sudo apt install python3-pip python3-venv nginx -y
-
-            # 2. Project directory setup
-            mkdir -p ~/Doctor_AI
+            sudo apt install python3-pip python3-venv nginx git -y
+            
+            # Setup App
+            git clone https://github.com/${{ github.repository }} ~/Doctor_AI || cd ~/Doctor_AI && git pull origin main
             cd ~/Doctor_AI
-
-            # 3. Code pull/clone logic
-            if [ -d ".git" ]; then
-              git pull origin main
-            else
-              git clone https://github.com/${{ github.repository }} .
-            fi
-
-            # 4. Environment setup
             python3 -m venv venv
             source venv/bin/activate
             pip install -r requirements.txt
             
-            # .env file create karna
+            # Env & Database
             echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" > .env
             echo "SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
-            echo "DEBUG=False" >> .env
-
-            # 5. Database migrations
             python manage.py migrate --noinput
             python manage.py collectstatic --noinput
 
-            # Note: Gunicorn restart command baad mein add karenge jab gunicorn setup ho jayega
+            # Automatic Nginx & Gunicorn Setup (No Manual Work)
+            sudo rm -f /etc/nginx/sites-enabled/default
+            sudo bash -c "cat > /etc/nginx/sites-available/doctor_ai <<EOF
+            server {
+                listen 80;
+                server_name ${{ env.instance_ip }};
+                location / {
+                    proxy_pass http://localhost:8000;
+                    include proxy_params;
+                }
+            }
+            EOF"
+            sudo ln -sf /etc/nginx/sites-available/doctor_ai /etc/nginx/sites-enabled/
+            sudo systemctl restart nginx
+            
+            # Start App in Background
+            pip install gunicorn
+            pkill gunicorn || true
+            gunicorn --daemon --bind 0.0.0.0:8000 health_ai.wsgi:application
