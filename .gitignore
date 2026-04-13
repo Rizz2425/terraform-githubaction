@@ -1,0 +1,26 @@
+.env
+db.sqlite3
+__pycache__/
+*.pkl
+# Terraform files
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# Python/Django files
+venv/
+.venv/
+__pycache__/
+.env
+db.sqlite3
+.terraform/
+terraform/.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+.venv/
+venv/
+*.pkl
+.env
+__pycache__/

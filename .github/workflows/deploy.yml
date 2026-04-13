@@ -1,0 +1,50 @@
+name: Django Deploy to AWS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            # 1. Update and install dependencies (Pehli baar ke liye)
+            sudo apt update -y
+            sudo apt install python3-pip python3-venv nginx -y
+
+            # 2. Project directory setup
+            mkdir -p ~/Doctor_AI
+            cd ~/Doctor_AI
+
+            # 3. Code pull/clone logic
+            if [ -d ".git" ]; then
+              git pull origin main
+            else
+              git clone https://github.com/${{ github.repository }} .
+            fi
+
+            # 4. Environment setup
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install -r requirements.txt
+            
+            # .env file create karna
+            echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" > .env
+            echo "SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
+            echo "DEBUG=False" >> .env
+
+            # 5. Database migrations
+            python manage.py migrate --noinput
+            python manage.py collectstatic --noinput
+
+            # Note: Gunicorn restart command baad mein add karenge jab gunicorn setup ho jayega
